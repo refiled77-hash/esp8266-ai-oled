@@ -18,7 +18,7 @@ export default async function handler(req, res) {
   }
 
   try {
-    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+    const model = genAI.getGenerativeModel({ model: "gemini-3.5-flash-lite" });
     const systemPrompt = "Jawablah pertanyaan berikut dengan sangat singkat, padat, dan tanpa format markdown (maksimal 15 kata), karena jawaban ini akan ditampilkan di layar kecil OLED ESP8266.";
     
     const result = await model.generateContent(`${systemPrompt}\n\nPertanyaan: ${prompt}`);
