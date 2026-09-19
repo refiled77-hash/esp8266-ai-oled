@@ -31,7 +31,7 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: "File audio tidak ditemukan." });
     }
 
-    // 1. Transkripsi via Groq Whisper
+    // 1. Transkripsi via Groq Whisper AI
     const formData = new FormData();
     formData.append("file", fs.createReadStream(audioFile.filepath), "audio.webm");
     formData.append("model", "whisper-large-v3");
@@ -54,20 +54,28 @@ export default async function handler(req, res) {
 
     const spokenText = whisperData.text;
     if (!spokenText || !spokenText.trim()) {
-      return res.status(400).json({ error: "Suara tidak terdengar jelas." });
+      return res.status(200).json({ transcript: "", reply: "Mendengarkan..." });
     }
 
-    // 2. Tanya Gemini
+    // 2. Tanya Gemini 3.5 Flash Lite
     const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
     const model = genAI.getGenerativeModel({ 
       model: "gemini-3.5-flash-lite",
-      systemInstruction: "You are an English LCT Quiz Assistant. The input is a spoken English question or multiple-choice question. Answer IMMEDIATELY with ONLY the correct option or direct answer (e.g., 'ANSWER: A' or 'ANSWER: Washington'). Keep explanation under 5 words so it fits on a tiny OLED screen."
+      systemInstruction: "You are an English LCT Quiz Assistant. The input is live audio transcription. IF the input contains a valid English question or multiple-choice question (A, B, C, D), answer IMMEDIATELY with ONLY the option or short answer (e.g., 'ANSWER: A' or 'ANSWER: Washington'). IF the input is just background noise, greetings, or incomplete sentence, reply strictly with 'NO_QUESTION'."
     });
 
     const result = await model.generateContent(spokenText);
     const reply = result.response.text().trim();
 
-    // 3. Kirim Supabase
+    // 3. Jika bukan soal, jangan kirim ke OLED / Supabase
+    if (reply.includes("NO_QUESTION")) {
+      return res.status(200).json({ 
+        transcript: spokenText, 
+        reply: "Mendengarkan..." 
+      });
+    }
+
+    // 4. Jika ada jawaban valid, kirim ke Supabase untuk ditampilkan di OLED
     const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
     await supabase.from('display_messages').insert([{ message: reply }]);
 

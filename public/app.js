@@ -4,127 +4,76 @@ const transcriptText = document.getElementById('transcript-text');
 const aiResponse = document.getElementById('ai-response');
 
 let mediaRecorder;
-let audioChunks = [];
 let isLiveMode = false;
-let audioContext;
-let analyser;
-let microphone;
-let silenceTimer;
-let isProcessing = false;
-
-// Minta izin mic sejak awal
-navigator.mediaDevices.getUserMedia({ audio: true }).catch(() => {
-  console.log("Izin mic belum diberikan");
-});
+let intervalId = null;
 
 btnRecord.addEventListener('click', async () => {
   if (!isLiveMode) {
-    startLiveListening();
+    startFastLiveMode();
   } else {
-    stopLiveListening();
+    stopFastLiveMode();
   }
 });
 
-async function startLiveListening() {
+async function startFastLiveMode() {
   try {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    
-    // Setup Audio Analyzer untuk deteksi Hening / Suara
-    audioContext = new (window.AudioContext || window.webkitAudioContext)();
-    analyser = audioContext.createAnalyser();
-    microphone = audioContext.createMediaStreamSource(stream);
-    microphone.connect(analyser);
-    analyser.fftSize = 512;
-
-    mediaRecorder = new MediaRecorder(stream);
-    audioChunks = [];
-
-    mediaRecorder.ondataavailable = (event) => {
-      if (event.data.size > 0) {
-        audioChunks.push(event.data);
-      }
-    };
-
-    mediaRecorder.onstop = async () => {
-      if (audioChunks.length > 0 && !isProcessing) {
-        isProcessing = true;
-        const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
-        await sendAudioToBackend(audioBlob);
-        audioChunks = [];
-        isProcessing = false;
-
-        // Restart perekaman otomatis untuk soal berikutnya jika masih di Live Mode
-        if (isLiveMode) {
-          mediaRecorder.start();
-          detectSilence();
-        }
-      }
-    };
-
-    mediaRecorder.start();
     isLiveMode = true;
-    statusText.innerText = "🎙️ LIVE MODE: Mendengarkan terus-menerus...";
+    
+    statusText.innerText = "⚡ LIVE FAST MODE: Standby mendengarkan soal...";
     btnRecord.innerText = "🛑 Matikan Live Mode";
     btnRecord.style.backgroundColor = "#ef4444";
 
-    detectSilence();
+    // Mulai siklus perekaman instan (setiap 3,5 detik)
+    recordAndProcessChunk(stream);
+    intervalId = setInterval(() => {
+      if (isLiveMode) {
+        recordAndProcessChunk(stream);
+      }
+    }, 3500);
 
   } catch (err) {
-    alert("Gagal mengaktifkan Microphone!");
+    alert("Izin microphone ditolak!");
   }
 }
 
-function stopLiveListening() {
+function stopFastLiveMode() {
   isLiveMode = false;
-  clearTimeout(silenceTimer);
+  if (intervalId) clearInterval(intervalId);
   if (mediaRecorder && mediaRecorder.state !== 'inactive') {
     mediaRecorder.stop();
   }
-  if (audioContext) audioContext.close();
-  
   statusText.innerText = "Mati";
-  btnRecord.innerText = "🎙️ Aktifkan Live Mode";
+  btnRecord.innerText = "⚡ Aktifkan Fast Live Mode";
   btnRecord.style.backgroundColor = "#0284c7";
 }
 
-// Fungsi mendeteksi kapan pembaca soal berhenti bicara (jeda 1.8 detik)
-function detectSilence() {
-  if (!isLiveMode || isProcessing) return;
+function recordAndProcessChunk(stream) {
+  let chunks = [];
+  mediaRecorder = new MediaRecorder(stream);
 
-  const dataArray = new Uint8Array(analyser.frequencyBinCount);
-  analyser.getByteFrequencyData(dataArray);
+  mediaRecorder.ondataavailable = (e) => {
+    if (e.data.size > 0) chunks.push(e.data);
+  };
 
-  // Hitung rata-rata volume suara
-  let sum = 0;
-  for (let i = 0; i < dataArray.length; i++) {
-    sum += dataArray[i];
-  }
-  let averageVolume = sum / dataArray.length;
-
-  // Jika volume di bawah ambang batas hening (suara berhenti)
-  if (averageVolume < 12) { 
-    if (!silenceTimer) {
-      silenceTimer = setTimeout(() => {
-        // Jika sudah diam selama 1.8 detik dan ada rekaman suara yang masuk
-        if (isLiveMode && mediaRecorder.state === 'recording' && audioChunks.length > 0) {
-          statusText.innerText = "⚡ Soal selesai dibaca! Memproses Jawaban AI...";
-          mediaRecorder.stop(); // Ini otomatis memicu kirim data ke backend
-        }
-      }, 1800); // 1.8 detik jeda
+  mediaRecorder.onstop = async () => {
+    if (chunks.length > 0 && isLiveMode) {
+      const audioBlob = new Blob(chunks, { type: 'audio/webm' });
+      await sendChunkToBackend(audioBlob);
     }
-  } else {
-    // Jika masih ada suara bicara, reset timer
-    clearTimeout(silenceTimer);
-    silenceTimer = null;
-    statusText.innerText = "🔴 Mendengarkan suara soal...";
-  }
+  };
 
-  if (isLiveMode) {
-    requestAnimationFrame(detectSilence);
-  }
+  mediaRecorder.start();
+
+  // Berhenti merekam tiap 3 detik untuk langsung dikirim
+  setTimeout(() => {
+    if (mediaRecorder.state === 'recording') {
+      mediaRecorder.stop();
+    }
+  }, 3000);
 }
 
-async function sendAudioToBackend(audioBlob) {
+async function sendChunkToBackend(audioBlob) {
   const formData = new FormData();
   formData.append('file', audioBlob, 'audio.webm');
 
@@ -135,13 +84,15 @@ async function sendAudioToBackend(audioBlob) {
     });
 
     const data = await res.json();
-    if (!res.ok || data.error) throw new Error(data.error || "Gagal memproses");
+    if (!res.ok || data.error) return; // Abaikan jika error/suara kosong
 
-    transcriptText.innerText = data.transcript;
-    aiResponse.innerText = data.reply;
-    statusText.innerText = "✅ Jawaban terkirim ke OLED! Menunggu soal berikutnya...";
+    // Tampilkan jika ada teks yang terdeteksi
+    if (data.transcript && data.transcript.length > 3) {
+      transcriptText.innerText = data.transcript;
+      aiResponse.innerText = data.reply;
+      statusText.innerText = "⚡ Jawaban Terdeteksi & Terkirim!";
+    }
   } catch (err) {
-    console.log("Abaikan jika suara hanya noise:", err.message);
-    statusText.innerText = "🎙️ Menunggu soal dibacakan...";
+    // Silent fail untuk potongan suara kosong/noise
   }
 }
