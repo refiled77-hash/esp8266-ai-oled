@@ -1,23 +1,30 @@
 <!DOCTYPE html>
-<html lang="id">
+<html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ESP8266 AI Controller</title>
+  <title>LCT AI Voice Assistant</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <div class="container">
-    <h2>🤖 AI to ESP8266 OLED</h2>
+    <h1>LCT Live Voice Assistant</h1>
+    <p>Otomatis mendengarkan Soal Bahasa Inggris & kirim jawaban ke OLED</p>
     
-    <div id="chat-box" class="chat-box">
-      <p class="bot-msg">Halo! Ketik pertanyaanmu, jawabannya akan dikirim ke layar OLED ESP8266.</p>
+    <div class="status-box">
+      <p>Status Mic: <span id="mic-status">Mati</span></p>
+      <button id="btn-listen">🎤 Mulai Dengar (Live)</button>
     </div>
 
-    <form id="ai-form">
-      <input type="text" id="user-input" placeholder="Tulis pertanyaan..." required autocomplete="off">
-      <button type="submit" id="send-btn">Kirim</button>
-    </form>
+    <div class="result-box">
+      <h3>Soal Terdeteksi:</h3>
+      <p id="transcript-text">- Belum ada suara -</p>
+    </div>
+
+    <div class="ai-box">
+      <h3>Jawaban AI (Di OLED):</h3>
+      <p id="ai-response">- Waiting -</p>
+    </div>
   </div>
 
   <script src="app.js"></script>

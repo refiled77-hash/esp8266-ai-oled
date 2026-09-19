@@ -1,42 +1,61 @@
-const form = document.getElementById('ai-form');
-const input = document.getElementById('user-input');
-const chatBox = document.getElementById('chat-box');
-const sendBtn = document.getElementById('send-btn');
+const btnListen = document.getElementById('btn-listen');
+const micStatus = document.getElementById('mic-status');
+const transcriptText = document.getElementById('transcript-text');
+const aiResponse = document.getElementById('ai-response');
 
-form.addEventListener('submit', async (e) => {
-  e.preventDefault();
-  const userText = input.value.trim();
-  if (!userText) return;
+let isListening = false;
+const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 
-  appendMessage(userText, 'user-msg');
-  input.value = '';
-  sendBtn.disabled = true;
+if (!SpeechRecognition) {
+  alert("Browser kamu tidak mendukung Speech Recognition. Gunakan Chrome di HP/PC!");
+} else {
+  const recognition = new SpeechRecognition();
+  recognition.continuous = true; // Dengar terus menerus
+  recognition.lang = 'en-US';   // Bahasa Inggris untuk LCT
+  recognition.interimResults = false;
 
-  try {
-    const res = await fetch('/api/chat', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ prompt: userText })
-    });
-
-    const data = await res.json();
-
-    if (res.ok) {
-      appendMessage(`[Sent to OLED]: ${data.reply}`, 'bot-msg');
+  btnListen.addEventListener('click', () => {
+    if (!isListening) {
+      recognition.start();
+      isListening = true;
+      micStatus.innerText = "Mendengarkan (English)...";
+      btnListen.innerText = "🛑 Stop Dengar";
+      btnListen.style.backgroundColor = "red";
     } else {
-      appendMessage(`Error: ${data.error}`, 'bot-msg');
+      recognition.stop();
+      isListening = false;
+      micStatus.innerText = "Mati";
+      btnListen.innerText = "🎤 Mulai Dengar (Live)";
+      btnListen.style.backgroundColor = "#0070f3";
     }
-  } catch (err) {
-    appendMessage('Gagal terhubung ke server.', 'bot-msg');
-  } finally {
-    sendBtn.disabled = false;
-  }
-});
+  });
 
-function appendMessage(text, className) {
-  const msgDiv = document.createElement('div');
-  msgDiv.className = className;
-  msgDiv.textContent = text;
-  chatBox.appendChild(msgDiv);
-  chatBox.scrollTop = chatBox.scrollHeight;
+  recognition.onresult = async (event) => {
+    const lastIndex = event.results.length - 1;
+    const spokenText = event.results[lastIndex][0].transcript;
+    
+    transcriptText.innerText = spokenText;
+    micStatus.innerText = "Memproses jawaban AI...";
+
+    // Kirim soal ke Serverless Function
+    try {
+      const res = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: spokenText })
+      });
+
+      const data = await res.json();
+      aiResponse.innerText = data.reply;
+      micStatus.innerText = "Mendengarkan (English)...";
+    } catch (err) {
+      aiResponse.innerText = "Error mengambil jawaban.";
+      micStatus.innerText = "Error!";
+    }
+  };
+
+  recognition.onend = () => {
+    // Auto restart mic kalau terputus sendiri
+    if (isListening) recognition.start();
+  };
 }
