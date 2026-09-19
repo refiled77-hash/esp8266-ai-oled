@@ -1,51 +1,63 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
-import { createClient } from "@supabase/supabase-js";
+const btnRecord = document.getElementById('btn-record');
+const statusText = document.getElementById('status-text');
+const transcriptText = document.getElementById('transcript-text');
+const aiResponse = document.getElementById('ai-response');
 
-export default async function handler(req, res) {
-  // Hanya terima request POST
-  if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method Not Allowed' });
+let mediaRecorder;
+let audioChunks = [];
+let isRecording = false;
+
+btnRecord.addEventListener('click', async () => {
+  if (!isRecording) {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      mediaRecorder = new MediaRecorder(stream);
+      audioChunks = [];
+
+      mediaRecorder.ondataavailable = (event) => {
+        audioChunks.push(event.data);
+      };
+
+      mediaRecorder.onstop = async () => {
+        const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+        await sendAudioToBackend(audioBlob);
+      };
+
+      mediaRecorder.start();
+      isRecording = true;
+      statusText.innerText = "🔴 Merekam Suara Guru...";
+      btnRecord.innerText = "🛑 Stop & Proses Jawaban";
+      btnRecord.style.backgroundColor = "#ef4444";
+    } catch (err) {
+      alert("Izin Microphone ditolak!");
+    }
+  } else {
+    mediaRecorder.stop();
+    isRecording = false;
+    statusText.innerText = "⏳ Memproses Whisper AI...";
+    btnRecord.innerText = "🎙️ Rekam Soal Berikutnya";
+    btnRecord.style.backgroundColor = "#0284c7";
   }
+});
 
-  const { message } = req.body;
-
-  if (!message) {
-    return res.status(400).json({ error: 'Message is required' });
-  }
+async function sendAudioToBackend(audioBlob) {
+  const formData = new FormData();
+  formData.append('file', audioBlob, 'audio.webm');
 
   try {
-    // Inisialisasi Gemini AI
-    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-    
-    // Pakai model gemini-3.5-flash-lite dengan System Instruction LCT
-    const model = genAI.getGenerativeModel({ 
-      model: "gemini-3.5-flash-lite",
-      systemInstruction: "You are an English LCT Quiz Assistant. The input is a spoken English question or multiple-choice question. Answer IMMEDIATELY with ONLY the correct option or direct answer (e.g., 'ANSWER: A' or 'ANSWER: Washington'). Keep explanation under 5 words so it fits on a tiny OLED screen."
+    const res = await fetch('/api/chat', {
+      method: 'POST',
+      body: formData
     });
 
-    // Generate Jawaban dari Gemini
-    const result = await model.generateContent(message);
-    const reply = result.response.text().trim();
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
 
-    // Inisialisasi Supabase
-    const supabase = createClient(
-      process.env.SUPABASE_URL,
-      process.env.SUPABASE_ANON_KEY
-    );
-
-    // Simpan hasil ke Supabase
-    const { error: dbError } = await supabase
-      .from('display_messages')
-      .insert([{ message: reply }]);
-
-    if (dbError) {
-      throw dbError;
-    }
-
-    return res.status(200).json({ reply });
-
-  } catch (error) {
-    console.error("Error handler:", error);
-    return res.status(500).json({ error: error.message });
+    transcriptText.innerText = data.transcript;
+    aiResponse.innerText = data.reply;
+    statusText.innerText = "✅ Selesai! Jawaban terkirim ke OLED.";
+  } catch (err) {
+    statusText.innerText = "Error: " + err.message;
+    transcriptText.innerText = "Gagal memproses audio.";
   }
 }

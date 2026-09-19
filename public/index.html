@@ -3,21 +3,21 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>LCT AI Voice Assistant</title>
+  <title>LCT AI Assistant (Whisper Powered)</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <div class="container">
-    <h1>LCT Live Voice Assistant</h1>
-    <p>Otomatis mendengarkan Soal Bahasa Inggris & kirim jawaban ke OLED</p>
+    <h1>LCT Whisper AI Assistant</h1>
+    <p>Peka jarak jauh & akurat setara ChatGPT</p>
     
     <div class="status-box">
-      <p>Status Mic: <span id="mic-status">Mati</span></p>
-      <button id="btn-listen">🎤 Mulai Dengar (Live)</button>
+      <p>Status: <span id="status-text">Ready</span></p>
+      <button id="btn-record">🎙️ Klik untuk Rekam</button>
     </div>
 
     <div class="result-box">
-      <h3>Soal Terdeteksi:</h3>
+      <h3>Hasil Dengar Whisper AI:</h3>
       <p id="transcript-text">- Belum ada suara -</p>
     </div>
 

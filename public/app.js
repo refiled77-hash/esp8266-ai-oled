@@ -1,61 +1,63 @@
-const btnListen = document.getElementById('btn-listen');
-const micStatus = document.getElementById('mic-status');
+const btnRecord = document.getElementById('btn-record');
+const statusText = document.getElementById('status-text');
 const transcriptText = document.getElementById('transcript-text');
 const aiResponse = document.getElementById('ai-response');
 
-let isListening = false;
-const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+let mediaRecorder;
+let audioChunks = [];
+let isRecording = false;
 
-if (!SpeechRecognition) {
-  alert("Browser kamu tidak mendukung Speech Recognition. Gunakan Chrome di HP/PC!");
-} else {
-  const recognition = new SpeechRecognition();
-  recognition.continuous = true; // Dengar terus menerus
-  recognition.lang = 'en-US';   // Bahasa Inggris untuk LCT
-  recognition.interimResults = false;
-
-  btnListen.addEventListener('click', () => {
-    if (!isListening) {
-      recognition.start();
-      isListening = true;
-      micStatus.innerText = "Mendengarkan (English)...";
-      btnListen.innerText = "🛑 Stop Dengar";
-      btnListen.style.backgroundColor = "red";
-    } else {
-      recognition.stop();
-      isListening = false;
-      micStatus.innerText = "Mati";
-      btnListen.innerText = "🎤 Mulai Dengar (Live)";
-      btnListen.style.backgroundColor = "#0070f3";
-    }
-  });
-
-  recognition.onresult = async (event) => {
-    const lastIndex = event.results.length - 1;
-    const spokenText = event.results[lastIndex][0].transcript;
-    
-    transcriptText.innerText = spokenText;
-    micStatus.innerText = "Memproses jawaban AI...";
-
-    // Kirim soal ke Serverless Function
+btnRecord.addEventListener('click', async () => {
+  if (!isRecording) {
     try {
-      const res = await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: spokenText })
-      });
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      mediaRecorder = new MediaRecorder(stream);
+      audioChunks = [];
 
-      const data = await res.json();
-      aiResponse.innerText = data.reply;
-      micStatus.innerText = "Mendengarkan (English)...";
+      mediaRecorder.ondataavailable = (event) => {
+        audioChunks.push(event.data);
+      };
+
+      mediaRecorder.onstop = async () => {
+        const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+        await sendAudioToBackend(audioBlob);
+      };
+
+      mediaRecorder.start();
+      isRecording = true;
+      statusText.innerText = "🔴 Merekam Suara Guru...";
+      btnRecord.innerText = "🛑 Stop & Proses Jawaban";
+      btnRecord.style.backgroundColor = "#ef4444";
     } catch (err) {
-      aiResponse.innerText = "Error mengambil jawaban.";
-      micStatus.innerText = "Error!";
+      alert("Izin Microphone ditolak!");
     }
-  };
+  } else {
+    mediaRecorder.stop();
+    isRecording = false;
+    statusText.innerText = "⏳ Memproses Whisper AI...";
+    btnRecord.innerText = "🎙️ Rekam Soal Berikutnya";
+    btnRecord.style.backgroundColor = "#0284c7";
+  }
+});
 
-  recognition.onend = () => {
-    // Auto restart mic kalau terputus sendiri
-    if (isListening) recognition.start();
-  };
+async function sendAudioToBackend(audioBlob) {
+  const formData = new FormData();
+  formData.append('file', audioBlob, 'audio.webm');
+
+  try {
+    const res = await fetch('/api/chat', {
+      method: 'POST',
+      body: formData
+    });
+
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
+
+    transcriptText.innerText = data.transcript;
+    aiResponse.innerText = data.reply;
+    statusText.innerText = "✅ Selesai! Jawaban terkirim ke OLED.";
+  } catch (err) {
+    statusText.innerText = "Error: " + err.message;
+    transcriptText.innerText = "Gagal memproses audio.";
+  }
 }
