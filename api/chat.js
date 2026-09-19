@@ -1,63 +1,82 @@
-const btnRecord = document.getElementById('btn-record');
-const statusText = document.getElementById('status-text');
-const transcriptText = document.getElementById('transcript-text');
-const aiResponse = document.getElementById('ai-response');
+import { GoogleGenerativeAI } from "@google/generative-ai";
+import { createClient } from "@supabase/supabase-js";
+import formidable from "formidable";
+import fs from "fs";
+import fetch from "node-fetch";
+import FormData from "form-data";
 
-let mediaRecorder;
-let audioChunks = [];
-let isRecording = false;
+export const config = {
+  api: {
+    bodyParser: false,
+  },
+};
 
-btnRecord.addEventListener('click', async () => {
-  if (!isRecording) {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      mediaRecorder = new MediaRecorder(stream);
-      audioChunks = [];
+export default async function handler(req, res) {
+  if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
 
-      mediaRecorder.ondataavailable = (event) => {
-        audioChunks.push(event.data);
-      };
-
-      mediaRecorder.onstop = async () => {
-        const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
-        await sendAudioToBackend(audioBlob);
-      };
-
-      mediaRecorder.start();
-      isRecording = true;
-      statusText.innerText = "🔴 Merekam Suara Guru...";
-      btnRecord.innerText = "🛑 Stop & Proses Jawaban";
-      btnRecord.style.backgroundColor = "#ef4444";
-    } catch (err) {
-      alert("Izin Microphone ditolak!");
-    }
-  } else {
-    mediaRecorder.stop();
-    isRecording = false;
-    statusText.innerText = "⏳ Memproses Whisper AI...";
-    btnRecord.innerText = "🎙️ Rekam Soal Berikutnya";
-    btnRecord.style.backgroundColor = "#0284c7";
-  }
-});
-
-async function sendAudioToBackend(audioBlob) {
-  const formData = new FormData();
-  formData.append('file', audioBlob, 'audio.webm');
+  const form = formidable({ keepExtensions: true });
 
   try {
-    const res = await fetch('/api/chat', {
-      method: 'POST',
+    const [fields, files] = await new Promise((resolve, reject) => {
+      form.parse(req, (err, fields, files) => {
+        if (err) reject(err);
+        else resolve([fields, files]);
+      });
+    });
+
+    const fileList = files.file;
+    const audioFile = Array.isArray(fileList) ? fileList[0] : fileList;
+
+    if (!audioFile || !audioFile.filepath) {
+      return res.status(400).json({ error: "File audio tidak ditemukan." });
+    }
+
+    // 1. Transkripsi via Groq Whisper
+    const formData = new FormData();
+    formData.append("file", fs.createReadStream(audioFile.filepath), "audio.webm");
+    formData.append("model", "whisper-large-v3");
+    formData.append("language", "en");
+
+    const whisperRes = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${process.env.GROQ_API_KEY}`,
+        ...formData.getHeaders()
+      },
       body: formData
     });
 
-    const data = await res.json();
-    if (data.error) throw new Error(data.error);
+    const whisperData = await whisperRes.json();
 
-    transcriptText.innerText = data.transcript;
-    aiResponse.innerText = data.reply;
-    statusText.innerText = "✅ Selesai! Jawaban terkirim ke OLED.";
-  } catch (err) {
-    statusText.innerText = "Error: " + err.message;
-    transcriptText.innerText = "Gagal memproses audio.";
+    if (!whisperRes.ok) {
+      return res.status(500).json({ error: whisperData.error?.message || "Gagal transkripsi audio di Groq." });
+    }
+
+    const spokenText = whisperData.text;
+    if (!spokenText || !spokenText.trim()) {
+      return res.status(400).json({ error: "Suara tidak terdengar jelas." });
+    }
+
+    // 2. Tanya Gemini
+    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+    const model = genAI.getGenerativeModel({ 
+      model: "gemini-3.5-flash-lite",
+      systemInstruction: "You are an English LCT Quiz Assistant. The input is a spoken English question or multiple-choice question. Answer IMMEDIATELY with ONLY the correct option or direct answer (e.g., 'ANSWER: A' or 'ANSWER: Washington'). Keep explanation under 5 words so it fits on a tiny OLED screen."
+    });
+
+    const result = await model.generateContent(spokenText);
+    const reply = result.response.text().trim();
+
+    // 3. Kirim Supabase
+    const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
+    await supabase.from('display_messages').insert([{ message: reply }]);
+
+    return res.status(200).json({ 
+      transcript: spokenText, 
+      reply: reply 
+    });
+
+  } catch (error) {
+    return res.status(500).json({ error: error.message || "Internal Server Error" });
   }
 }

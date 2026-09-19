@@ -7,6 +7,11 @@ let mediaRecorder;
 let audioChunks = [];
 let isRecording = false;
 
+// Minta izin mic saat halaman pertama kali dimuat
+navigator.mediaDevices.getUserMedia({ audio: true }).catch(() => {
+  console.log("Izin mic belum diberikan");
+});
+
 btnRecord.addEventListener('click', async () => {
   if (!isRecording) {
     try {
@@ -15,7 +20,9 @@ btnRecord.addEventListener('click', async () => {
       audioChunks = [];
 
       mediaRecorder.ondataavailable = (event) => {
-        audioChunks.push(event.data);
+        if (event.data.size > 0) {
+          audioChunks.push(event.data);
+        }
       };
 
       mediaRecorder.onstop = async () => {
@@ -51,7 +58,7 @@ async function sendAudioToBackend(audioBlob) {
     });
 
     const data = await res.json();
-    if (data.error) throw new Error(data.error);
+    if (!res.ok || data.error) throw new Error(data.error || "Gagal memproses");
 
     transcriptText.innerText = data.transcript;
     aiResponse.innerText = data.reply;
