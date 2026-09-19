@@ -4,31 +4,49 @@ const transcriptText = document.getElementById('transcript-text');
 const aiResponse = document.getElementById('ai-response');
 
 let mediaRecorder;
+let audioChunks = [];
 let isLiveMode = false;
-let intervalId = null;
+let streamInterval = null;
+let isSending = false;
 
 btnRecord.addEventListener('click', async () => {
   if (!isLiveMode) {
-    startFastLiveMode();
+    startContinuousLive();
   } else {
-    stopFastLiveMode();
+    stopContinuousLive();
   }
 });
 
-async function startFastLiveMode() {
+async function startContinuousLive() {
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const stream = await navigator.mediaDevices.getUserMedia({ 
+      audio: {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true
+      } 
+    });
+
+    audioChunks = [];
+    mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+
+    mediaRecorder.ondataavailable = (event) => {
+      if (event.data.size > 0) {
+        audioChunks.push(event.data);
+      }
+    };
+
+    mediaRecorder.start(1000); // Ambil sampel data tiap 1 detik
     isLiveMode = true;
-    
-    statusText.innerText = "⚡ LIVE FAST MODE: Standby mendengarkan soal...";
+
+    statusText.innerText = "⚡ LIVE MODE: Standby mendengarkan soal...";
     btnRecord.innerText = "🛑 Matikan Live Mode";
     btnRecord.style.backgroundColor = "#ef4444";
 
-    // Mulai siklus perekaman instan (setiap 3,5 detik)
-    recordAndProcessChunk(stream);
-    intervalId = setInterval(() => {
-      if (isLiveMode) {
-        recordAndProcessChunk(stream);
+    // Tiap 3.5 detik, kirim akumulasi audio sejauh ini ke server
+    streamInterval = setInterval(() => {
+      if (isLiveMode && audioChunks.length > 0 && !isSending) {
+        sendBufferToBackend();
       }
     }, 3500);
 
@@ -37,43 +55,22 @@ async function startFastLiveMode() {
   }
 }
 
-function stopFastLiveMode() {
+function stopContinuousLive() {
   isLiveMode = false;
-  if (intervalId) clearInterval(intervalId);
+  if (streamInterval) clearInterval(streamInterval);
   if (mediaRecorder && mediaRecorder.state !== 'inactive') {
     mediaRecorder.stop();
   }
+  audioChunks = [];
   statusText.innerText = "Mati";
-  btnRecord.innerText = "⚡ Aktifkan Fast Live Mode";
+  btnRecord.innerText = "⚡ Aktifkan Live Mode";
   btnRecord.style.backgroundColor = "#0284c7";
 }
 
-function recordAndProcessChunk(stream) {
-  let chunks = [];
-  mediaRecorder = new MediaRecorder(stream);
-
-  mediaRecorder.ondataavailable = (e) => {
-    if (e.data.size > 0) chunks.push(e.data);
-  };
-
-  mediaRecorder.onstop = async () => {
-    if (chunks.length > 0 && isLiveMode) {
-      const audioBlob = new Blob(chunks, { type: 'audio/webm' });
-      await sendChunkToBackend(audioBlob);
-    }
-  };
-
-  mediaRecorder.start();
-
-  // Berhenti merekam tiap 3 detik untuk langsung dikirim
-  setTimeout(() => {
-    if (mediaRecorder.state === 'recording') {
-      mediaRecorder.stop();
-    }
-  }, 3000);
-}
-
-async function sendChunkToBackend(audioBlob) {
+async function sendBufferToBackend() {
+  isSending = true;
+  // Gabungkan semua chunk audio yang terkumpul dari awal
+  const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
   const formData = new FormData();
   formData.append('file', audioBlob, 'audio.webm');
 
@@ -84,15 +81,24 @@ async function sendChunkToBackend(audioBlob) {
     });
 
     const data = await res.json();
-    if (!res.ok || data.error) return; // Abaikan jika error/suara kosong
 
-    // Tampilkan jika ada teks yang terdeteksi
-    if (data.transcript && data.transcript.length > 3) {
+    if (res.ok && data.transcript && data.transcript.length > 3) {
       transcriptText.innerText = data.transcript;
-      aiResponse.innerText = data.reply;
-      statusText.innerText = "⚡ Jawaban Terdeteksi & Terkirim!";
+
+      // Jika Gemini mendeteksi soal dan memberikan jawaban
+      if (data.reply && data.reply !== "Mendengarkan...") {
+        aiResponse.innerText = data.reply;
+        statusText.innerText = "✅ Jawaban Terdeteksi & Terkirim ke OLED!";
+        
+        // Reset buffer audio untuk bersiap mendengarkan soal berikutnya
+        audioChunks = [];
+      } else {
+        statusText.innerText = "🔴 Mendengarkan pembacaan soal...";
+      }
     }
   } catch (err) {
-    // Silent fail untuk potongan suara kosong/noise
+    console.log("Processing buffer...");
+  } finally {
+    isSending = false;
   }
 }
